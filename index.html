@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>二维码生成器</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f6f8;color:#18202b;font:16px/1.5 system-ui,-apple-system,"Microsoft YaHei",sans-serif}
+    main{max-width:580px;margin:48px auto;padding:32px;background:#fff;border:1px solid #e8ebef;border-radius:20px;box-shadow:0 12px 40px #18202b0a}
+    h1{margin:0 0 6px;font-size:26px}p{margin:0 0 24px;color:#667085}label{display:block;margin:18px 0 8px;font-weight:600}
+    select,textarea,input[type=file],button{width:100%;font:inherit}select,textarea,input[type=file]{border:1px solid #cbd1da;border-radius:10px;padding:11px;background:white}
+    textarea{height:112px;resize:vertical}small{display:block;color:#667085;margin-top:6px}button{margin-top:24px;border:0;border-radius:10px;padding:13px;background:#172b4d;color:#fff;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.5;cursor:not-allowed}.download{background:#eaf0f8;color:#172b4d;margin-top:12px}
+    #result{display:none;margin-top:28px;text-align:center;border-top:1px solid #e8ebef;padding-top:24px}#preview{width:min(100%,340px);height:auto;border:1px solid #eee}
+    #status{min-height:24px;color:#b42318;margin-top:10px}#qr-engine{position:absolute;left:-9999px;top:-9999px}
+    @media(max-width:640px){main{margin:16px;padding:22px}}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>二维码生成器</h1>
+    <p>本地生成，直接预览并下载 PNG。</p>
+    <label for="type">内容类型</label>
+    <select id="type"><option value="url">网址</option><option value="text">自定义文字</option></select>
+    <label for="content" id="content-label">目标网址</label>
+    <textarea id="content" placeholder="https://example.com/page" spellcheck="false"></textarea>
+    <small id="hint">建议填写自己长期控制的网址。网址必须以 https:// 或 http:// 开头。</small>
+    <label for="logo">中心图片（可选）</label>
+    <input type="file" id="logo" accept="image/png,image/jpeg,image/webp,image/gif">
+    <small>仅作中心 Logo，不会把整张图片编码进二维码；建议使用简洁图标。</small>
+    <button id="generate" type="button">生成二维码</button>
+    <div id="status" role="status" aria-live="polite"></div>
+    <section id="result" aria-label="生成结果">
+      <img id="preview" alt="生成的二维码预览">
+      <button id="download" class="download" type="button">下载 PNG</button>
+    </section>
+  </main>
+  <div id="qr-engine" aria-hidden="true"></div>
+  <script src="qrcode.min.js"></script>
+  <script>
+    const type = document.querySelector('#type');
+    const content = document.querySelector('#content');
+    const logo = document.querySelector('#logo');
+    const status = document.querySelector('#status');
+    const result = document.querySelector('#result');
+    const preview = document.querySelector('#preview');
+    const engine = document.querySelector('#qr-engine');
+    let outputUrl = '';
+
+    type.addEventListener('change', () => {
+      document.querySelector('#content-label').textContent = type.value === 'url' ? '目标网址' : '自定义文字';
+      content.placeholder = type.value === 'url' ? 'https://example.com/page' : '输入想让扫码者看到的文字';
+      document.querySelector('#hint').textContent = type.value === 'url'
+        ? '建议填写自己长期控制的网址。网址必须以 https:// 或 http:// 开头。'
+        : '文字直接写入二维码，生成后无法远程修改。';
+      result.style.display = 'none';
+    });
+
+    function readImage(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片无法读取，请换一张 PNG 或 JPG。')); };
+        img.src = url;
+      });
+    }
+
+    document.querySelector('#generate').addEventListener('click', async () => {
+      const button = document.querySelector('#generate');
+      status.textContent = '';
+      result.style.display = 'none';
+      button.disabled = true;
+      try {
+        if (typeof QRCode === 'undefined') throw new Error('缺少 qrcode.min.js，请把两个文件放在同一目录。');
+        const value = content.value.trim();
+        if (!value) throw new Error('请先输入网址或文字。');
+        if (type.value === 'url' && !/^https?:\/\/[^\s]+$/i.test(value)) throw new Error('请输入以 https:// 或 http:// 开头的完整网址。');
+        const file = logo.files[0];
+        if (file && !['image/png','image/jpeg','image/webp','image/gif'].includes(file.type)) throw new Error('图片仅支持 PNG、JPG、WebP 或 GIF。');
+        if (file && file.size > 5 * 1024 * 1024) throw new Error('图片请小于 5 MB。');
+
+        engine.replaceChildren();
+        new QRCode(engine, { text:value, width:900, height:900, colorDark:'#111827', colorLight:'#ffffff', correctLevel:QRCode.CorrectLevel.H });
+        const qrCanvas = engine.querySelector('canvas');
+        if (!qrCanvas) throw new Error('二维码生成失败，请缩短内容后重试。');
+
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1024;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0,0,1024,1024);
+        ctx.drawImage(qrCanvas,62,62,900,900);
+        if (file) {
+          const img = await readImage(file);
+          const box = 156, pad = 12, x = (1024-box)/2, y = x;
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(x-pad,y-pad,box+pad*2,box+pad*2);
+          const scale = Math.min(box/img.width,box/img.height);
+          const w = img.width*scale, h = img.height*scale;
+          ctx.drawImage(img,(1024-w)/2,(1024-h)/2,w,h);
+        }
+        if (outputUrl) URL.revokeObjectURL(outputUrl);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve,'image/png'));
+        if (!blob) throw new Error('图片导出失败。');
+        outputUrl = URL.createObjectURL(blob);
+        preview.src = outputUrl;
+        result.style.display = 'block';
+      } catch (error) {
+        status.textContent = error.message || '生成失败。';
+      } finally { button.disabled = false; }
+    });
+
+    document.querySelector('#download').addEventListener('click', () => {
+      if (!outputUrl) return;
+      const link = document.createElement('a');
+      link.href = outputUrl;
+      link.download = 'qrcode.png';
+      link.click();
+    });
+  </script>
+</body>
+</html>
